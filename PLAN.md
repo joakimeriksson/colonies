@@ -309,3 +309,143 @@ bin/colonies usage records --executor alice-box --json
 ```
 
 The name that ends up in the ledger as initiator is the name given to `colonies user add`, looked up from the private key that signed the submit. A submit signed by an executor key is attributed to the executor name instead. The provider name is the `--owner` given at `executor add`, or later via `executor setowner`.
+
+## Executor to server messages (design, 2026-09-02)
+
+### What executors tell the server today
+
+| Message | Sent | Carries | Problem |
+|---|---|---|---|
+| `addexecutormsg` | once, by the colony owner's key | `Capabilities.Hardware[]` (model, nodes, cpu string, cores, memory, storage, GPU name/memory/count, platform, arch, network) and `Software[]`, `LocationName` | Every value comes from `EXECUTOR_HW_*` env vars. Nothing is probed. |
+| `updateexecutormsg` | when the executor chooses, signed by the executor itself | a whole new `Capabilities` | Overwrites in place, no history. |
+| `reportallocationmsg` | never, by any real executor | per-project allocated and used CPU, GPU, storage | Unit-less, unenforced, unused. |
+| `assignprocessmsg` | every poll | `AvailableCPU`, `AvailableMemory` | Only the kube executor fills them. Not stored. |
+| `closesuccessfulmsg`, `closefailedmsg` | at end | output or errors | No resource figures. |
+
+There is no host identity, no probed capacity, no security description, no liveness beyond the timestamp of the last assign, and no measured consumption. Capabilities describe what the executor offers to jobs, which is a policy choice; nothing describes what the machine is.
+
+### Four messages
+
+Two are new, two are changes to existing ones. Everything an executor sends about itself is self-declared. That is the same trust level as SLURM accounting and is fine for a colony of people who know each other; anything stronger needs hardware attestation, which is out of scope.
+
+#### 1. `reportusagemsg`, new, measured consumption of one running process
+
+```json
+{
+  "msgtype": "reportusagemsg",
+  "colonyname": "dev",
+  "processid": "5cc170cd...",
+  "sampletime": 1756836000,
+  "final": false,
+  "source": "docker-stats",
+  "measured": {
+    "cpuseconds": 412.7,
+    "gpuseconds": 0,
+    "gpuutilpct": 0,
+    "memcurrentbytes": 734003200,
+    "mempeakbytes": 1503238144,
+    "ioreadbytes": 10485760,
+    "iowritebytes": 52428800,
+    "netrxbytes": 0,
+    "nettxbytes": 0
+  },
+  "applied": {
+    "cpu": "4000m",
+    "mem": "2Gi",
+    "gpucount": 0,
+    "enforced": true
+  }
+}
+```
+
+Rules on the server:
+
+- Signed by the executor the process is assigned to, and the process must be RUNNING. Anyone else gets 403.
+- All figures are absolute totals since the process started, never deltas. A repeated or reordered report is harmless; the server keeps the higher `cpuseconds` and the higher `mempeakbytes`.
+- Updates the open `USAGE_RECORDS` row: the measured columns, `MEASURED_SOURCE`, `LAST_REPORT_TIME`. `applied` is stored once, so the ledger records whether the reserved amount was actually enforced on the machine.
+- Sent on a timer while running, default every 30 seconds, and once more with `final: true` immediately before close. A job whose executor dies keeps its last report.
+- `gpuseconds` is GPU count times seconds the process held the GPU. `gpuutilpct` is the average utilization sample, an efficiency number, not a billing number.
+
+Sources per executor: docker `ContainerStats` or cgroup v2 files (`cpu.stat usage_usec`, `memory.peak`, `io.stat`); kube metrics-server; SLURM `sacct` at close only, which means one report with `final: true`; unix and python `getrusage` of the child.
+
+#### 2. `registernodemsg`, new, the machine behind the executor
+
+Sent by the executor at start, signed with the executor key, and again whenever the probe result changes. One node can carry several executors, so the node id is derived from the host, not the executor: `/etc/machine-id` where present, else the hostname. Every executor on that host reports the same node id, and the server links `EXECUTORS.NODE_ID`.
+
+```json
+{
+  "msgtype": "registernodemsg",
+  "colonyname": "dev",
+  "executorname": "alice-box",
+  "node": {
+    "nodeid": "f3c1...machine-id",
+    "hostname": "alice-box.lan",
+    "platform": "linux",
+    "architecture": "amd64",
+    "kernel": "6.8.0",
+    "cpu": { "model": "AMD Ryzen 9 7950X", "cores": 16, "threads": 32, "mhz": 4500 },
+    "memorybytes": 68719476736,
+    "gpus": [
+      { "uuid": "GPU-3a9e...", "name": "NVIDIA RTX 4090", "memorybytes": 25769803776, "driver": "550.54" }
+    ],
+    "storage": [ { "mount": "/var/lib/colonies", "bytes": 2000000000000, "kind": "nvme" } ],
+    "network": [ "192.168.1.20" ],
+    "runtime": { "kind": "docker", "version": "27.1", "gpuruntime": "nvidia-container-toolkit 1.16" },
+    "security": {
+      "isolation": "container",
+      "rootless": false,
+      "usernamespaces": true,
+      "seccomp": "default",
+      "readonlyrootfs": false,
+      "imageverification": "none",
+      "networkpolicy": "host",
+      "attestation": "none"
+    },
+    "labels": { "site": "home", "power": "solar" }
+  }
+}
+```
+
+Probed, not configured: `gopsutil` for CPU, memory, disks and kernel; `nvidia-smi --query-gpu` or NVML for GPUs; the Docker API `Info` call for the runtime; `/etc/machine-id` for the id. The `security` block is what the executor claims about how it isolates jobs. It is descriptive, so that a submitter can require `isolation=container` in a condition later, and so that the ledger records what a job ran under. It proves nothing.
+
+Server side: writes the dormant `NODES` table, which already has most of these columns, and adds a `NODE_HISTORY` row when the probe changes. The three existing `getnode*` messages get handlers. Usage records copy `node_id` at open time.
+
+#### 3. `heartbeatmsg`, new, liveness and current load
+
+Today the server only knows an executor is alive because it polled for work. An idle executor that stops polling looks the same as a dead one, and a provider gets no credit for keeping a machine available. A small periodic message fixes both.
+
+```json
+{
+  "msgtype": "heartbeatmsg",
+  "colonyname": "dev",
+  "executorname": "alice-box",
+  "nodeid": "f3c1...",
+  "time": 1756836000,
+  "load": { "cpupct": 12.5, "memusedbytes": 8589934592, "gpuutilpct": [0], "runningprocesses": 1 },
+  "available": { "cpu": "12000m", "mem": "56Gi", "gpucount": 1 }
+}
+```
+
+Every 30 seconds by default. The server updates `LastHeardFromTime` and `NODES.LAST_SEEN`, and appends to a `NODE_SAMPLES` hypertable, which is what TimescaleDB is for. The stale executor cleanup then has a real signal. From the samples the server can compute availability hours per node, which is the second thing a provider might want credit for: capacity offered, not only capacity used. Whether idle hours earn anything is a policy question, but the data should exist. The `available` block replaces the `AvailableCPU` and `AvailableMemory` fields that currently ride on every assign call.
+
+#### 4. `updateexecutormsg`, existing, gains history
+
+No format change. The handler writes the previous capabilities to `EXECUTOR_HARDWARE_HISTORY` with a `valid_to` timestamp before overwriting, so a usage record's `hardware_hash` always resolves to what was declared at the time. The same happens on re-registration and on an owner change.
+
+`reportallocationmsg` is left alone until there is an account entity for it to mean something.
+
+### What the server can then answer
+
+- Who ran what, on which executor, on which physical machine, owned by whom, under what isolation, with what hardware at the time.
+- Reserved versus measured, per attempt, and whether the reservation was enforced.
+- Which machines were online and how loaded, hour by hour, per owner.
+- Whether an executor's declared capabilities match what its host actually has, since both are recorded.
+
+### Order of work
+
+1. `reportusagemsg` on the server: message, handler, client function, tests. One day.
+2. Docker executor: bring it onto current `pkg/core`, apply CPU and memory limits from the function spec, sample `ContainerStats` on a timer, send reports. Two to three days.
+3. `registernodemsg` and `heartbeatmsg` on the server, `NODES` wiring, `NODE_SAMPLES`. Two days.
+4. Docker executor probes its host with `gopsutil` and NVML, sends node registration and heartbeats. One to two days.
+5. SLURM executor: `sacct` at close, node list from the job. One day.
+6. Capabilities history on `updateexecutormsg`. Half a day.
