@@ -449,3 +449,58 @@ No format change. The handler writes the previous capabilities to `EXECUTOR_HARD
 4. Docker executor probes its host with `gopsutil` and NVML, sends node registration and heartbeats. One to two days.
 5. SLURM executor: `sacct` at close, node list from the job. One day.
 6. Capabilities history on `updateexecutormsg`. Half a day.
+
+## Trust and optional reporting (2026-09-02)
+
+### Reporting is opt-in per executor
+
+Usage reporting is a capability an executor declares, not a requirement. The capabilities block gains:
+
+```json
+"accounting": { "reports": "none" | "measured", "enforces": true | false }
+```
+
+`reports` says whether the executor sends `reportusagemsg`. `enforces` says whether it applies the reserved CPU, memory and GPU as hard limits on the job. Both are copied into every usage record at open time, so a record always says under which regime it was produced. A simple executor sets neither and still gets reserved-times-wall records, because those need nothing from the executor. A colony's credit policy can then say: only records from executors with `enforces: true` earn credit at the reserved rate, only records with `reports: measured` can be settled on the measured basis, and everything else is informational. A submitter can require `accounting.enforces=true` in a condition if they want a limit they can rely on.
+
+### Who can lie, and about what
+
+The executor process is run by the machine's owner, the provider. The provider therefore controls every number the executor reports: measured usage, node capacity, heartbeats, the security block. A provider who wants more credit can inflate all of them. The consumer controls only the function spec, and the server sees both parties' signed requests.
+
+What the server observes itself, without trusting either side:
+
+- The reserved amounts, taken from the consumer's signed submit. The consumer picked them.
+- Start and end time, stamped by the server clock at assign and close. The provider can stretch a job by delaying close, but the consumer sees their process stuck in RUNNING and their output missing, and the record shows a wall time far above the measured CPU time.
+- Which executor, and who owned it at the time.
+
+That is why reserved capacity times server-measured wall time is the default credit basis in this plan. Each of its three inputs comes from a different party, and none of them is the number the interested party reports about itself. SLURM and the cloud providers settled on the same basis for the same reason.
+
+Measured usage from the executor is a refinement, not a replacement. It answers "how efficiently was the reservation used", and it is the only way to charge less than the reservation, which is a favour to the consumer that the provider has no incentive to fake upward. Its weak direction is the provider inflating it. The server bounds that:
+
+- `cpuseconds` can never exceed reserved cores times wall seconds, and `gpuseconds` can never exceed reserved GPU count times wall seconds. Reports above the bound are clamped and the record is flagged.
+- Totals must be monotonic across reports. A decrease is flagged.
+- Measured CPU should be consistent with the heartbeat load samples on the same node over the same interval. A large mismatch is flagged.
+- The sum of reserved amounts running concurrently on a node cannot exceed what the node registered. That one is enforced at assign, not just flagged.
+
+Flags land in a `FLAGS` column on the usage record and show up in `colonies usage records`. They do not block anything; they make a dishonest provider visible to the colony owner and to the consumers whose jobs were affected.
+
+### Cheap audits that do not need cryptography
+
+- Canary jobs. The colony owner submits a job with a known profile, for example one that burns exactly 600 CPU seconds on 2 cores, targeted at a specific executor, and compares the report. Doing this at random intervals makes systematic inflation risky for the provider. This needs no new code beyond a small canary function.
+- Two-sided measurement. The consumer's own code runs on the provider's machine and can call `getrusage` on itself at exit and write the result as an OUT attribute, which executors already support. The server then has two figures for the same run from two parties. Agreement is evidence; disagreement is a flag. A provider would have to tamper with the consumer's container to defeat this, which is a much larger step than editing a number in a report.
+- Reputation. Every flag, every canary result and every consumer complaint is attached to a provider id that does not change. In a colony of people who know each other, that is usually enough.
+
+### What cannot be fixed without hardware
+
+Nothing above stops a provider who is willing to modify the executor, the kernel and the container runtime in concert. Only remote attestation does that: a TPM-backed measured boot, or a confidential VM such as AMD SEV-SNP or Intel TDX, attesting to the exact executor binary that produced the report. The `security.attestation` field in the node registration is reserved for that. It is the right answer for a colony of strangers and the wrong amount of work for a colony of colleagues. The plan should make it possible to add later, which the field does, and not attempt it now.
+
+### Summary of the trust model
+
+| Figure | Who asserts it | Server can verify | Used for |
+|---|---|---|---|
+| Reserved CPU, GPU, memory | consumer, signed | yes, it is the request | credit basis |
+| Wall time | server clock | yes | credit basis |
+| Executor and owner | server, from colony owner's registration | yes | attribution |
+| Measured CPU, GPU, memory | provider's executor | bounded and cross-checked, not proven | efficiency, discounts, audit |
+| Node capacity and load | provider's executor | plausibility only | scheduling, availability hours |
+| Security block | provider's executor | no | informational, condition matching |
+| Consumer's self-measurement | consumer's code, on provider's machine | compared against the above | audit |
