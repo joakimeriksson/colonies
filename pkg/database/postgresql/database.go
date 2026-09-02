@@ -315,8 +315,38 @@ func (db *PQDatabase) dropServerTable() error {
 	return nil
 }
 
+func (db *PQDatabase) dropUsageRecordsTable() error {
+	sqlStatement := `DROP TABLE IF EXISTS ` + db.dbPrefix + `USAGE_RECORDS`
+	_, err := db.postgresql.Exec(sqlStatement)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (db *PQDatabase) dropExecutorOwnersTable() error {
+	sqlStatement := `DROP TABLE IF EXISTS ` + db.dbPrefix + `EXECUTOR_OWNERS`
+	_, err := db.postgresql.Exec(sqlStatement)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (db *PQDatabase) Drop() error {
-	err := db.dropUsersTable()
+	err := db.dropUsageRecordsTable()
+	if err != nil {
+		return err
+	}
+
+	err = db.dropExecutorOwnersTable()
+	if err != nil {
+		return err
+	}
+
+	err = db.dropUsersTable()
 	if err != nil {
 		return err
 	}
@@ -632,6 +662,42 @@ func (db *PQDatabase) createBlueprintHistoryTable() error {
 
 	// Create index for faster queries by resource_id
 	indexStatement := `CREATE INDEX IF NOT EXISTS ` + db.dbPrefix + `BLUEPRINT_HISTORY_INDEX1 ON ` + db.dbPrefix + `BLUEPRINT_HISTORY (BLUEPRINT_ID, TIMESTAMP DESC)`
+	_, err = db.postgresql.Exec(indexStatement)
+	return err
+}
+
+func (db *PQDatabase) createUsageRecordsTable() error {
+	sqlStatement := `CREATE TABLE IF NOT EXISTS ` + db.dbPrefix + `USAGE_RECORDS (USAGE_ID TEXT PRIMARY KEY NOT NULL, COLONY_NAME TEXT NOT NULL, PROCESS_ID TEXT NOT NULL, ATTEMPT INTEGER, PROCESSGRAPH_ID TEXT, INITIATOR_ID TEXT, INITIATOR_NAME TEXT, LABEL TEXT, FUNCNAME TEXT, EXECUTOR_ID TEXT, EXECUTOR_NAME TEXT, EXECUTOR_TYPE TEXT, PROVIDER_ID TEXT, PROVIDER_NAME TEXT, LOCATION_NAME TEXT, HARDWARE TEXT, CPU BIGINT, MEMORY BIGINT, STORAGE BIGINT, GPUNAME TEXT, GPUCOUNT INTEGER, GPUMEM BIGINT, NODES INTEGER, START_TIME TIMESTAMPTZ NOT NULL, END_TIME TIMESTAMPTZ, OUTCOME TEXT NOT NULL, CPU_SECONDS DOUBLE PRECISION, GPU_SECONDS DOUBLE PRECISION, MEM_PEAK_BYTES BIGINT, IO_READ_BYTES BIGINT, IO_WRITE_BYTES BIGINT, MEASURED_SOURCE TEXT, LAST_REPORT_TIME TIMESTAMPTZ)`
+	_, err := db.postgresql.Exec(sqlStatement)
+	if err != nil {
+		return err
+	}
+
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS ` + db.dbPrefix + `USAGE_RECORDS_INDEX1 ON ` + db.dbPrefix + `USAGE_RECORDS (COLONY_NAME, START_TIME)`,
+		`CREATE INDEX IF NOT EXISTS ` + db.dbPrefix + `USAGE_RECORDS_INDEX2 ON ` + db.dbPrefix + `USAGE_RECORDS (COLONY_NAME, INITIATOR_ID, START_TIME)`,
+		`CREATE INDEX IF NOT EXISTS ` + db.dbPrefix + `USAGE_RECORDS_INDEX3 ON ` + db.dbPrefix + `USAGE_RECORDS (COLONY_NAME, PROVIDER_ID, START_TIME)`,
+		`CREATE INDEX IF NOT EXISTS ` + db.dbPrefix + `USAGE_RECORDS_INDEX4 ON ` + db.dbPrefix + `USAGE_RECORDS (PROCESS_ID)`,
+		`CREATE INDEX IF NOT EXISTS ` + db.dbPrefix + `USAGE_RECORDS_INDEX5 ON ` + db.dbPrefix + `USAGE_RECORDS (COLONY_NAME, EXECUTOR_NAME, OUTCOME)`,
+	}
+	for _, indexStatement := range indexes {
+		_, err = db.postgresql.Exec(indexStatement)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (db *PQDatabase) createExecutorOwnersTable() error {
+	sqlStatement := `CREATE TABLE IF NOT EXISTS ` + db.dbPrefix + `EXECUTOR_OWNERS (ID TEXT PRIMARY KEY NOT NULL, COLONY_NAME TEXT NOT NULL, EXECUTOR_NAME TEXT NOT NULL, OWNER_ID TEXT NOT NULL, OWNER_NAME TEXT NOT NULL, VALID_FROM TIMESTAMPTZ NOT NULL, VALID_TO TIMESTAMPTZ)`
+	_, err := db.postgresql.Exec(sqlStatement)
+	if err != nil {
+		return err
+	}
+
+	indexStatement := `CREATE INDEX IF NOT EXISTS ` + db.dbPrefix + `EXECUTOR_OWNERS_INDEX1 ON ` + db.dbPrefix + `EXECUTOR_OWNERS (COLONY_NAME, EXECUTOR_NAME, VALID_TO)`
 	_, err = db.postgresql.Exec(indexStatement)
 	return err
 }
@@ -1006,6 +1072,16 @@ func (db *PQDatabase) Initialize() error {
 	}
 
 	err = db.createLocationsTable()
+	if err != nil {
+		return err
+	}
+
+	err = db.createUsageRecordsTable()
+	if err != nil {
+		return err
+	}
+
+	err = db.createExecutorOwnersTable()
 	if err != nil {
 		return err
 	}

@@ -49,6 +49,14 @@ func (s *ServerAdapter) LocationDB() database.LocationDatabase {
 	return s.server.locationDB
 }
 
+func (s *ServerAdapter) GetUsageDB() database.UsageDatabase {
+	return s.server.usageDB
+}
+
+func (s *ServerAdapter) GetExecutorDB() database.ExecutorDatabase {
+	return s.server.executorDB
+}
+
 func (s *ServerAdapter) GetValidator() security.Validator {
 	return s.server.validator
 }

@@ -102,6 +102,7 @@ type ColoniesController struct {
 	snapshotDB       database.SnapshotDatabase
 	blueprintDB      database.BlueprintDatabase
 	securityDB       database.SecurityDatabase
+	usageDB          database.UsageDatabase
 	cmdQueue         chan *command
 	blockingCmdQueue chan *command
 	scheduler        *scheduler.Scheduler
@@ -157,6 +158,7 @@ func CreateColoniesController(db database.Database,
 	controller.snapshotDB = db
 	controller.blueprintDB = db
 	controller.securityDB = db
+	controller.usageDB = db
 	controller.thisNode = thisNode
 	controller.clusterConfig = clusterConfig
 	controller.etcdServer = cluster.CreateEtcdServer(controller.thisNode, controller.clusterConfig, etcdDataPath)
@@ -366,6 +368,10 @@ func (controller *ColoniesController) AddChild(
 				cmd.errorChan <- errors.New("Process with Id " + parentProcessID + " does not belong to a processgraph")
 				return
 			}
+
+			// Children added at runtime are attributed to whoever submitted the parent
+			process.InitiatorID = parentProcess.InitiatorID
+			process.InitiatorName = parentProcess.InitiatorName
 
 			process.Parents = []string{parentProcess.ID}
 			process.ProcessGraphID = processGraphID
@@ -765,6 +771,7 @@ func (controller *ColoniesController) CloseSuccessful(processID string, executor
 				cmd.errorChan <- err
 				return
 			}
+			controller.closeUsageRecord(processID, core.USAGE_SUCCESS)
 
 			if process.ProcessGraphID != "" {
 				log.WithFields(log.Fields{"ProcessGraphId": process.ProcessGraphID}).Debug("Resolving processgraph (close successful)")
@@ -913,6 +920,7 @@ func (controller *ColoniesController) CloseFailed(processID string, errs []strin
 				cmd.errorChan <- err
 				return
 			}
+			controller.closeUsageRecord(processID, core.USAGE_FAILED)
 
 			process, err := controller.processDB.GetProcessByID(processID)
 			if err != nil {
@@ -962,6 +970,7 @@ func (controller *ColoniesController) HandleDefunctProcessgraph(processGraphID s
 	if err2 != nil {
 		return err2
 	}
+	controller.closeUsageRecord(processID, core.USAGE_FAILED)
 	err2 = controller.processGraphDB.SetProcessGraphState(processGraphID, core.FAILED)
 	if err2 != nil {
 		return err2
@@ -1032,6 +1041,7 @@ func (controller *ColoniesController) Assign(executorID string, colonyName strin
 				cmd.errorChan <- err
 				return
 			}
+			controller.openUsageRecord(selectedProcess, executor)
 
 			// Update executor ID on all channels for this process
 			controller.channelRouter.SetExecutorIDForProcess(selectedProcess.ID, executorID)
@@ -1172,6 +1182,8 @@ func (controller *ColoniesController) DistributedAssign(executor *core.Executor,
 		}, nil
 	}
 
+	controller.openUsageRecord(selectedProcess, executor)
+
 	// Update executor ID on all channels for this process
 	controller.channelRouter.SetExecutorIDForProcess(selectedProcess.ID, executor.ID)
 
@@ -1249,6 +1261,7 @@ func (controller *ColoniesController) UnassignExecutor(processID string) error {
 				return
 			}
 
+			controller.closeUsageRecord(processID, core.USAGE_UNASSIGNED)
 			cmd.errorChan <- controller.processDB.Unassign(process)
 			controller.eventHandler.Signal(process)
 		}}
@@ -1266,6 +1279,7 @@ func (controller *ColoniesController) ResetProcess(processID string) error {
 				return
 			}
 
+			controller.closeUsageRecord(processID, core.USAGE_UNASSIGNED)
 			cmd.errorChan <- controller.processDB.ResetProcess(process)
 			controller.eventHandler.Signal(process)
 		}}

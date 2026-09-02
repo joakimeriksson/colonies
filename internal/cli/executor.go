@@ -36,6 +36,16 @@ func init() {
 	addExecutorCmd.Flags().StringVarP(&TargetExecutorName, "name", "", "", "Executor name")
 	addExecutorCmd.Flags().StringVarP(&TargetExecutorType, "type", "", "", "Executor type")
 	addExecutorCmd.Flags().BoolVarP(&Approve, "approve", "", false, "Also, approve the Executor")
+	addExecutorCmd.Flags().StringVarP(&ExecutorOwnerName, "owner", "", "", "Colony user who owns this executor, default the colony itself")
+
+	executorCmd.AddCommand(setExecutorOwnerCmd)
+	setExecutorOwnerCmd.Flags().StringVarP(&TargetExecutorName, "name", "", "", "Executor name")
+	setExecutorOwnerCmd.MarkFlagRequired("name")
+	setExecutorOwnerCmd.Flags().StringVarP(&ExecutorOwnerName, "owner", "", "", "Colony user who owns this executor, empty hands it back to the colony")
+
+	executorCmd.AddCommand(getExecutorOwnerCmd)
+	getExecutorOwnerCmd.Flags().StringVarP(&TargetExecutorName, "name", "", "", "Executor name")
+	getExecutorOwnerCmd.MarkFlagRequired("name")
 
 	CreateExecutorCmd.Flags().StringVarP(&SpecFile, "spec", "", "", "JSON specification of an executor")
 	CreateExecutorCmd.Flags().StringVarP(&TargetExecutorName, "name", "", "", "Executor name")
@@ -126,6 +136,12 @@ var addExecutorCmd = &cobra.Command{
 			log.WithFields(log.Fields{"ExecutorName": executor.Name}).Info("Approving Executor")
 			err = client.ApproveExecutor(ColonyName, executor.Name, ColonyPrvKey)
 			CheckError(err)
+		}
+
+		if ExecutorOwnerName != "" {
+			_, err = client.SetExecutorOwner(ColonyName, executor.Name, ExecutorOwnerName, ColonyPrvKey)
+			CheckError(err)
+			log.WithFields(log.Fields{"ExecutorName": executor.Name, "Owner": ExecutorOwnerName}).Info("Executor owner set")
 		}
 
 		log.WithFields(log.Fields{
@@ -397,5 +413,54 @@ var rejectExecutorCmd = &cobra.Command{
 		CheckError(err)
 
 		log.WithFields(log.Fields{"ExecutorName": TargetExecutorName, "ColonyName": ColonyName}).Info("Executor reject")
+	},
+}
+
+var ExecutorOwnerName string
+
+var setExecutorOwnerCmd = &cobra.Command{
+	Use:   "setowner",
+	Short: "Set which colony user owns an executor",
+	Long:  "Set which colony user owns an executor. Usage on the executor is credited to its owner. An empty owner hands the executor back to the colony.",
+	Run: func(cmd *cobra.Command, args []string) {
+		client := setup()
+
+		if ColonyPrvKey == "" {
+			CheckError(errors.New("You must specify a Colony private key by exporting COLONIES_COLONY_PRVKEY"))
+		}
+
+		owner, err := client.SetExecutorOwner(ColonyName, TargetExecutorName, ExecutorOwnerName, ColonyPrvKey)
+		CheckError(err)
+
+		log.WithFields(log.Fields{
+			"ExecutorName": owner.ExecutorName,
+			"OwnerName":    owner.OwnerName,
+			"OwnerID":      owner.OwnerID,
+			"ColonyName":   ColonyName}).
+			Info("Executor owner set")
+	},
+}
+
+var getExecutorOwnerCmd = &cobra.Command{
+	Use:   "owner",
+	Short: "Show which colony user owns an executor",
+	Long:  "Show which colony user owns an executor",
+	Run: func(cmd *cobra.Command, args []string) {
+		client := setup()
+
+		owner, err := client.GetExecutorOwner(ColonyName, TargetExecutorName, PrvKey)
+		CheckError(err)
+
+		ownerName := owner.OwnerName
+		if owner.OwnerID == "" {
+			ownerName = "colony"
+		}
+
+		log.WithFields(log.Fields{
+			"ExecutorName": TargetExecutorName,
+			"OwnerName":    ownerName,
+			"OwnerID":      owner.OwnerID,
+			"ColonyName":   ColonyName}).
+			Info("Executor owner")
 	},
 }

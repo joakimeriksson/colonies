@@ -248,8 +248,12 @@ func TestAddChild(t *testing.T) {
 	// Add task5 to task1
 	childFunctionSpec := utils.CreateTestFunctionSpec(env.ColonyName)
 	childFunctionSpec.NodeName = "task5"
-	_, err = client.AddChild(assignedProcess.ProcessGraphID, assignedProcess.ID, "", childFunctionSpec, false, env.ExecutorPrvKey)
+	child, err := client.AddChild(assignedProcess.ProcessGraphID, assignedProcess.ID, "", childFunctionSpec, false, env.ExecutorPrvKey)
 	assert.Nil(t, err)
+	// A child added at runtime is attributed to whoever submitted the parent
+	assert.Equal(t, assignedProcess.InitiatorID, child.InitiatorID)
+	assert.Equal(t, assignedProcess.InitiatorName, child.InitiatorName)
+	assert.NotEmpty(t, child.InitiatorID)
 	err = client.Close(assignedProcess.ID, env.ExecutorPrvKey)
 	assert.Nil(t, err)
 

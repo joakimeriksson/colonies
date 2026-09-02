@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"github.com/colonyos/colonies/pkg/core"
 	"os"
 	"strconv"
 	"time"
@@ -54,6 +55,7 @@ func (controller *ColoniesController) TimeoutLoop() {
 			}
 			if time.Now().Unix() > process.ExecDeadline.Unix() {
 				if process.Retries >= process.FunctionSpec.MaxRetries && process.FunctionSpec.MaxRetries > -1 {
+					controller.closeUsageRecord(process.ID, core.USAGE_TIMEOUT)
 					err := controller.CloseFailed(process.ID, []string{"Maximum execution time limit exceeded"})
 					if err != nil {
 						log.WithFields(log.Fields{"ProcessId": process.ID, "Error": err}).Debug("Max retries reached, but failed to close process")
@@ -63,6 +65,7 @@ func (controller *ColoniesController) TimeoutLoop() {
 					continue
 				}
 
+				controller.closeUsageRecord(process.ID, core.USAGE_TIMEOUT)
 				err := controller.UnassignExecutor(process.ID)
 				if err != nil {
 					log.WithFields(log.Fields{"ProcessId": process.ID, "Error": err}).Error("Failed to unassign process")

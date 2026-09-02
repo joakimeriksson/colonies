@@ -331,6 +331,13 @@ func (db *PQDatabase) RemoveExecutorByName(colonyName string, executorName strin
 		return err
 	}
 
+	// Close the usage ledger for everything this executor was running before
+	// the process rows lose their executor id below
+	err = db.CloseUsageRecordsByExecutor(colonyName, executorName, time.Now(), core.USAGE_EXECUTOR_LOST)
+	if err != nil {
+		return err
+	}
+
 	// Move back the executor currently running process back to the queue
 	sqlStatement = `UPDATE ` + db.dbPrefix + `PROCESSES SET IS_ASSIGNED=FALSE, START_TIME=$1, END_TIME=$2, ASSIGNED_EXECUTOR_ID=$3, STATE=$4 WHERE ASSIGNED_EXECUTOR_ID=$5 AND STATE=$6`
 	_, err = db.postgresql.Exec(sqlStatement, time.Time{}, time.Time{}, "", core.WAITING, executor.ID, core.RUNNING)

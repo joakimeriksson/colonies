@@ -620,3 +620,32 @@ func createTestColoniesController2(db *postgresql.PQDatabase) *ColoniesControlle
 	clusterConfig.AddNode(node)
 	return CreateColoniesController(db, node, clusterConfig, "/tmp/colonies/etcd_test2", constants.GENERATOR_TRIGGER_PERIOD, constants.CRON_TRIGGER_PERIOD, false, -1, 500, time.Duration(constants.DEFAULT_STALE_EXECUTOR_DURATION)*time.Second)
 }
+// UsageDatabase interface
+func (db *DatabaseMock) OpenUsageRecord(record *core.UsageRecord) error { return nil }
+func (db *DatabaseMock) CloseUsageRecord(processID string, endTime time.Time, outcome string) error {
+	return nil
+}
+func (db *DatabaseMock) CloseUsageRecordsByExecutor(colonyName string, executorName string, endTime time.Time, outcome string) error {
+	return nil
+}
+func (db *DatabaseMock) SetMeasuredUsage(processID string, cpuSeconds float64, gpuSeconds float64, memPeakBytes int64, ioReadBytes int64, ioWriteBytes int64, source string, reportTime time.Time) error {
+	return nil
+}
+func (db *DatabaseMock) GetUsageRecordsByProcessID(processID string) ([]*core.UsageRecord, error) {
+	return nil, nil
+}
+func (db *DatabaseMock) QueryUsageRecords(colonyName string, from time.Time, to time.Time, initiatorID string, providerID string, executorName string, limit int) ([]*core.UsageRecord, error) {
+	return nil, nil
+}
+func (db *DatabaseMock) SummarizeUsage(colonyName string, from time.Time, to time.Time, groupBy string, initiatorID string, providerID string) ([]*core.UsageSummary, error) {
+	return nil, nil
+}
+func (db *DatabaseMock) UsageBalance(colonyName string, from time.Time, to time.Time) ([]*core.UsageBalance, error) {
+	return nil, nil
+}
+func (db *DatabaseMock) SetExecutorOwner(colonyName string, executorName string, ownerID string, ownerName string) error {
+	return nil
+}
+func (db *DatabaseMock) GetExecutorOwner(colonyName string, executorName string) (*core.ExecutorOwner, error) {
+	return nil, nil
+}
