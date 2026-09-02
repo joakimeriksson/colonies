@@ -9,8 +9,21 @@ import (
 	"github.com/muesli/termenv"
 )
 
+// hours prints a duration in hours, keeping enough precision that a short
+// demo run does not show as 0.00.
 func hours(seconds float64) string {
-	return fmt.Sprintf("%.2f", seconds/3600.0)
+	h := seconds / 3600.0
+	if h != 0 && h < 0.01 && h > -0.01 {
+		return fmt.Sprintf("%.4f", h)
+	}
+	return fmt.Sprintf("%.2f", h)
+}
+
+func signedHours(seconds float64) string {
+	if seconds >= 0 {
+		return "+" + hours(seconds)
+	}
+	return hours(seconds)
 }
 
 func gbHours(byteSeconds float64) string {
@@ -144,10 +157,10 @@ func printUsageBalanceTable(balances []*core.UsageBalance) {
 			termenv.String(hours(b.ConsumedCoreSeconds)).Foreground(theme.ColorMagenta),
 			termenv.String(hours(b.ProvidedCoreSeconds)).Foreground(theme.ColorMagenta),
 			termenv.String(hours(b.SelfCoreSeconds)).Foreground(theme.ColorGray),
-			termenv.String(fmt.Sprintf("%+.2f", b.NetCoreSeconds()/3600.0)).Foreground(netColor),
+			termenv.String(signedHours(b.NetCoreSeconds())).Foreground(netColor),
 			termenv.String(hours(b.ConsumedGPUSeconds)).Foreground(theme.ColorMagenta),
 			termenv.String(hours(b.ProvidedGPUSeconds)).Foreground(theme.ColorMagenta),
-			termenv.String(fmt.Sprintf("%+.2f", b.NetGPUSeconds()/3600.0)).Foreground(gpuNetColor),
+			termenv.String(signedHours(b.NetGPUSeconds())).Foreground(gpuNetColor),
 		}
 		t.AddRow(row)
 	}

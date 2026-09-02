@@ -621,6 +621,7 @@ func createTestColoniesController2(db *postgresql.PQDatabase) *ColoniesControlle
 	return CreateColoniesController(db, node, clusterConfig, "/tmp/colonies/etcd_test2", constants.GENERATOR_TRIGGER_PERIOD, constants.CRON_TRIGGER_PERIOD, false, -1, 500, time.Duration(constants.DEFAULT_STALE_EXECUTOR_DURATION)*time.Second)
 }
 // UsageDatabase interface
+func (db *DatabaseMock) EnsureUsageTables() error { return nil }
 func (db *DatabaseMock) OpenUsageRecord(record *core.UsageRecord) error { return nil }
 func (db *DatabaseMock) CloseUsageRecord(processID string, endTime time.Time, outcome string) error {
 	return nil

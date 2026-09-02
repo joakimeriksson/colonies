@@ -18,6 +18,14 @@ const usageRecordColumns = `USAGE_ID, COLONY_NAME, PROCESS_ID, ATTEMPT, PROCESSG
 // Wall-clock seconds of a record; open records count up to now.
 const usageWallSeconds = `EXTRACT(EPOCH FROM (COALESCE(END_TIME, NOW()) - START_TIME))`
 
+func (db *PQDatabase) EnsureUsageTables() error {
+	err := db.createUsageRecordsTable()
+	if err != nil {
+		return err
+	}
+	return db.createExecutorOwnersTable()
+}
+
 func (db *PQDatabase) OpenUsageRecord(record *core.UsageRecord) error {
 	if record == nil {
 		return errors.New("Usage record is nil")

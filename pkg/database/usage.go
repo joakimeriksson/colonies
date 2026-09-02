@@ -10,6 +10,10 @@ import (
 // It is deliberately separate from the process tables: process rows are
 // mutable and purged by the retention policy, usage records are neither.
 type UsageDatabase interface {
+	// EnsureUsageTables creates the ledger tables if they do not exist. Safe to
+	// call on every server start, so an existing deployment gets them without
+	// re-initializing the database.
+	EnsureUsageTables() error
 	// OpenUsageRecord inserts a record with outcome USAGE_RUNNING.
 	OpenUsageRecord(record *core.UsageRecord) error
 	// CloseUsageRecord closes the open record for a process, if any.

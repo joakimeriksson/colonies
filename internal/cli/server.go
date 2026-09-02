@@ -304,6 +304,13 @@ var serverStartCmd = &cobra.Command{
 			}
 		}
 
+		// The usage ledger tables are additive and idempotent, so create them on
+		// every start rather than only with --initdb
+		err = db.EnsureUsageTables()
+		if err != nil {
+			log.WithFields(log.Fields{"Error": err}).Error("Failed to create usage tables")
+		}
+
 		log.Info("Starting HTTP server")
 		startServer(db, node, clusterConfig, EtcdDataDir)
 	},

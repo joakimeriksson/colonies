@@ -270,12 +270,42 @@ Deliberately not done in the proof of concept:
 - No hourly rollup worker. Summaries are computed from the raw records on every query, which is fine at proof-of-concept scale.
 - The CPU parser still returns zero for strings without an `m` suffix.
 
-Trying it:
+Running it locally (verified 2026-09-02):
 
 ```bash
-colonies executor add --name mybox --type docker --executorid <id> --owner alice --approve
-colonies usage ls --from 7d --group-by initiator
-colonies usage ls --from 7d --provider me --group-by initiator
-colonies usage balance --from 30d
-colonies usage records --executor mybox --json
+# Build the CLI and server binary from this branch
+make build                       # or: CGO_ENABLED=0 go build -o bin/colonies ./cmd/main.go
+
+# Start Postgres and MinIO from the compose file, or any Postgres on localhost:5432
+docker compose up -d timescaledb
+
+# Point the server and CLI at it. docker-compose.env has a working set of keys;
+# COLONIES_SERVER_ID must be the id of COLONIES_SERVER_PRVKEY
+# (colonies security id --prvkey $COLONIES_SERVER_PRVKEY)
+source docker-compose.env
+export COLONIES_DB_HOST=localhost COLONIES_RETENTION=false
+
+# First start creates all tables. Later starts create only the usage tables if
+# missing, so an existing deployment can start this binary without --initdb.
+bin/colonies server start --initdb --etcddatadir /tmp/colonies/etcd
+
+# Colony, users, and executors with owners (colony owner key)
+bin/colonies colony add --name dev --colonyid $(bin/colonies security id --prvkey $COLONIES_COLONY_PRVKEY | sed 's/.*Id=//')
+bin/colonies user add --name alice --userid <alice id> --email a@example.org
+bin/colonies user add --name bob   --userid <bob id>   --email b@example.org
+bin/colonies executor add --name alice-box --type cpu --executorid <id> --owner alice --approve
+bin/colonies executor add --name bob-gpu   --type gpu --executorid <id> --owner bob   --approve
+
+# bob runs on alice's machine, alice runs on bob's (each with their own private key)
+bin/colonies function submit --spec job.json --prvkey <bob key>
+bin/colonies process assign --prvkey <alice-box executor key>
+bin/colonies process close -p <process id> --prvkey <alice-box executor key>
+
+# Views. COLONIES_PRVKEY decides whose view you get.
+COLONIES_PRVKEY=<alice key> bin/colonies usage ls --provider me --group-by initiator
+COLONIES_PRVKEY=<alice key> bin/colonies usage balance --from 30d
+COLONIES_PRVKEY=$COLONIES_COLONY_PRVKEY bin/colonies usage ls --group-by provider
+bin/colonies usage records --executor alice-box --json
 ```
+
+The name that ends up in the ledger as initiator is the name given to `colonies user add`, looked up from the private key that signed the submit. A submit signed by an executor key is attributed to the executor name instead. The provider name is the `--owner` given at `executor add`, or later via `executor setowner`.
