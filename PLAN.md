@@ -504,3 +504,70 @@ Nothing above stops a provider who is willing to modify the executor, the kernel
 | Node capacity and load | provider's executor | plausibility only | scheduling, availability hours |
 | Security block | provider's executor | no | informational, condition matching |
 | Consumer's self-measurement | consumer's code, on provider's machine | compared against the above | audit |
+
+## Provider register and grading (design, 2026-09-03)
+
+### Why a provider entity
+
+The proof of concept credits usage to an executor owner, which is a user in one colony. That is enough to answer "who used my machine" but not enough to answer "should I trust this machine". Trust accumulates on the party that stands behind the hardware, over years, across colonies, and across many nodes and executors. That party needs its own permanent identity. Call it a provider.
+
+A provider is an organisation or a person: RISE, a university department, or one individual with a box under the desk. It has a key pair like every other identity in Colonies, so its id is stable and its claims are signed. Users are what people are inside a colony; providers are what they are as suppliers of hardware. One person may be both.
+
+```
+Provider (permanent, may span colonies)
+  └── Node (a physical or virtual machine, registered by the provider)
+        └── Executor (a worker process on that node, member of one colony)
+              └── Usage records
+```
+
+### What the register holds
+
+`PROVIDERS` is a server-wide table, not per colony:
+
+| Column | Meaning |
+|---|---|
+| `PROVIDER_ID` | hash of the provider's public key |
+| `NAME`, `ORGANISATION`, `CONTACT` | display and contact, set by the provider, verified by the server owner |
+| `REGISTERED` | first seen; tenure is computed from this |
+| `TIER` | the manual grade: `new`, `verified`, `trusted`, `suspended`. Set by the server owner, or by a colony owner for their colony only |
+| `ATTESTATION` | highest attestation level any of its nodes has shown: `none`, `tpm`, `confidential-vm` |
+| `PUBLIC_KEY` | so nodes can prove they belong to the provider |
+
+Node registration gains a `providerid` and a signature by the provider key over the node id, so a node cannot claim to belong to RISE without RISE's key. `EXECUTOR_OWNERS.OWNER_ID` becomes a provider id rather than a user id. Usage records copy the provider id and its tier at open time, so a record made while a provider was `new` stays marked `new` even after the provider is promoted.
+
+### The grade is evidence, with a manual tier on top
+
+A manual tier alone is what every marketplace starts with and every marketplace regrets, because it goes stale. The register keeps the tier, and computes a score next to it from things the server already observes or will observe under this plan:
+
+| Signal | Source | Direction |
+|---|---|---|
+| Tenure | `REGISTERED` | older is better, saturates after a year |
+| Volume served | count and core hours of records with outcome success | more is better, log scale |
+| Failure rate on the provider's nodes | `failed`, `timeout`, `executor_lost` outcomes, excluding failures the consumer caused, which needs the exit code | lower is better |
+| Availability | heartbeat samples versus declared uptime | higher is better |
+| Flag rate | usage records flagged by the bounds checks in the trust section | lower is better |
+| Canary agreement | canary jobs whose measured result matched expectation | higher is better |
+| Consumer ratings | optional thumbs on a finished process by its initiator | higher is better, weak weight |
+| Attestation | node registration | a step up, not a slider |
+
+Each signal is stored as a rolling window, say 90 days, plus lifetime totals, so a provider that goes bad shows it within weeks and a provider that fixes things recovers. The score is a single number the CLI can print and a scheduler can compare, but the signals stay visible so a reader can see why a provider scores as it does.
+
+New providers start with no history and therefore a low score, whatever their tier. That is the property the user asked for: a cheap new node is visibly new, and only time and clean records change that. A new node under an established provider inherits the provider's score for scheduling, because the provider signed for it and its own record is at stake, but the node keeps its own signals so one bad machine in a fleet shows up on its own.
+
+### What the grade is used for
+
+- Conditions. `conditions.provider.mintier: verified` or `conditions.provider.minscore: 0.7`, or `conditions.provider.names: [RISE]`. The scheduler treats these like executor type today. This is the consumer's tool: I want my job on hardware I trust.
+- Trust bounds. Providers in `new` get tighter clamps on measured usage and more canaries; `trusted` gets fewer. The bounds table in the trust section becomes a function of tier.
+- Credit weight. A colony can weight core hours by provider score when settling, so a new provider earns less per hour until proven. Policy, kept outside the server, but the score is in the export.
+- Visibility. `colonies provider ls` prints tier, score, tenure, nodes, hours served, flag rate. `colonies provider get --name RISE` prints the signals. `colonies node ls --provider RISE` lists their machines.
+
+### Keeping it honest
+
+- Sybil resets. A provider with a bad record cannot start over cheaply, because a new provider id starts at the bottom and needs the server owner or a colony owner to admit it. Admission is the moment a human asks who this is.
+- Grade laundering. The tier a record was produced under is frozen on the record. Promoting a provider does not rewrite what its past hours were worth.
+- Provider versus node. A provider vouches for its nodes by signing them. A stolen executor key on a compromised machine cannot register a new node as that provider without the provider key, which should live somewhere safer than the machines.
+- Portability. The register lives on one Colonies server. Two servers do not share it in this design. If that is ever wanted, a provider's record can be exported as a document signed by the server, and another server can choose to honour it. That is federation and not part of this plan.
+
+### Order of work
+
+This sits after the executor messages, because most signals come from them. Suggested sequence: provider entity and register with manual tier only, then node signing, then the computed score once heartbeats and flags exist, then conditions on provider tier and score in the scheduler.
