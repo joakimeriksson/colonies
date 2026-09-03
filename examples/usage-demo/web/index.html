@@ -1,0 +1,122 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Colonies Usage (live)</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{--paper:#f5f6f4;--paper-2:#eceeeb;--ink:#1b2228;--ink-2:#4a5558;--ink-3:#7a8588;--rule:#d5dad7;--rule-2:#bfc7c3;--accent:#0e6b62;--accent-soft:#dcebe7;--accent-ink:#0a4f49;--ok:#2f6b3a;--warn:#a86a12;--crit:#a83a2c;--code-bg:#e9ece9}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--paper:#151a1c;--paper-2:#1c2225;--ink:#e4e8e6;--ink-2:#b3bcb9;--ink-3:#7f8a88;--rule:#2b3336;--rule-2:#3a4447;--accent:#5fc3b6;--accent-soft:#183531;--accent-ink:#8fd9cf;--ok:#7cc48a;--warn:#e0a44a;--crit:#e2715f;--code-bg:#20282b}}
+:root[data-theme="dark"]{--paper:#151a1c;--paper-2:#1c2225;--ink:#e4e8e6;--ink-2:#b3bcb9;--ink-3:#7f8a88;--rule:#2b3336;--rule-2:#3a4447;--accent:#5fc3b6;--accent-soft:#183531;--accent-ink:#8fd9cf;--ok:#7cc48a;--warn:#e0a44a;--crit:#e2715f;--code-bg:#20282b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px;line-height:1.5}
+.wrap{max-width:1100px;margin:0 auto;padding:40px 24px 80px;display:flex;flex-direction:column;gap:40px}
+.eyebrow{font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);font-weight:500}
+h1{font-size:28px;font-weight:600;margin:6px 0 8px;letter-spacing:-.01em}
+h2{font-size:18px;font-weight:600;margin:0;padding-top:14px;border-top:2px solid var(--ink)}
+p{margin:0;color:var(--ink-2)}
+code{font-family:"IBM Plex Mono",monospace;font-size:.88em;background:var(--code-bg);padding:.08em .35em;border-radius:3px}
+section{display:flex;flex-direction:column;gap:10px}
+.cmd{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--accent-ink);background:var(--accent-soft);padding:6px 10px;border-radius:4px;display:inline-block;align-self:flex-start}
+.tbl{overflow-x:auto;border-top:1px solid var(--rule-2);border-bottom:1px solid var(--rule-2)}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+th{text-align:left;font-weight:500;font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);padding:8px 12px 8px 0;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:8px 12px 8px 0;border-bottom:1px solid var(--rule);vertical-align:top;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+th.n,td.n{text-align:right}
+td.mono{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--ink-2)}
+.pill{display:inline-block;font-size:11px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:3px}
+.pill.success{background:var(--accent-soft);color:var(--ok)}
+.pill.running{background:var(--code-bg);color:var(--warn)}
+.pill.failed,.pill.timeout,.pill.executor_lost,.pill.unassigned{background:var(--code-bg);color:var(--crit)}
+.pos{color:var(--ok)}.neg{color:var(--crit)}
+.note{font-size:13.5px;color:var(--ink-2);border-left:2px solid var(--rule-2);padding-left:12px}
+.who{display:flex;gap:8px;flex-wrap:wrap}
+.who button{font:inherit;font-size:13px;padding:5px 12px;border:1px solid var(--rule-2);background:transparent;color:var(--ink-2);border-radius:4px;cursor:pointer}
+.who button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent)}
+</style></head><body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">colonies usage · colony "dev" · live, updated <span id="updated">never</span></div>
+  <h1>Who ran what, on whose machine</h1>
+  <p>Fed by a script that runs <code>colonies usage ... --json</code> every five seconds and drops the files next to this page. No server changes involved. Pick a viewer to see what each identity is allowed to see.</p>
+</header>
+
+<section>
+  <div class="who" id="who"></div>
+  <p class="note" id="whonote"></p>
+</section>
+
+<section>
+  <h2>Balance per member</h2>
+  <span class="cmd">colonies usage balance --from 30d</span>
+  <div class="tbl"><table id="balance"></table></div>
+  <p class="note">Net is provided minus consumed. Self-use is shown but not netted. Hours are reserved capacity times wall time.</p>
+</section>
+
+<section>
+  <h2>By initiator, the consumer view</h2>
+  <span class="cmd">colonies usage ls --group-by initiator</span>
+  <div class="tbl"><table id="by_initiator"></table></div>
+</section>
+
+<section>
+  <h2>By provider, the machine-owner view</h2>
+  <span class="cmd">colonies usage ls --group-by provider</span>
+  <div class="tbl"><table id="by_provider"></table></div>
+</section>
+
+<section>
+  <h2>Records, one per attempt</h2>
+  <span class="cmd">colonies usage records</span>
+  <div class="tbl"><table id="records"></table></div>
+</section>
+</div>
+<script>
+let DATA = {records:[],balance:[]};
+const VIEWERS = [
+  {id:'owner', label:'Colony owner', note:'Sees every record in the colony.'},
+  {id:'alice', label:'alice', note:'Owns alice-box. Sees her own runs anywhere, plus everything that ran on alice-box.'},
+  {id:'bob',   label:'bob',   note:'Owns bob-gpu. Sees his own runs anywhere, plus everything that ran on bob-gpu.'},
+  {id:'carol', label:'carol', note:'Owns no machine. Sees only her own runs.'},
+];
+let viewer='owner';
+const h=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const hrs=s=>{const x=s/3600;return (x!==0&&Math.abs(x)<0.01)?x.toFixed(4):x.toFixed(2)};
+const gbh=b=>(b/1073741824/3600).toFixed(2);
+const shortId=id=>id?id.slice(0,12):'';
+function visible(r){ if(viewer==='owner')return true; return r.initiatorname===viewer||r.providername===viewer; }
+function summarize(rows,key,name){
+  const m=new Map();
+  for(const r of rows){ const k=r[key]||'colony'; const s=m.get(k)||{name:r[name]||'colony',attempts:0,succeeded:0,failed:0,running:0,wall:0,core:0,gpu:0,mem:0};
+    const end=r.endtime&&!r.endtime.startsWith('0001')?new Date(r.endtime):new Date(); const w=(end-new Date(r.starttime))/1000;
+    s.attempts++; if(r.outcome==='success')s.succeeded++; else if(r.outcome==='failed'||r.outcome==='timeout')s.failed++; else if(r.outcome==='running')s.running++;
+    s.wall+=w; s.core+=r.cpu*w/1000; s.gpu+=r.gpucount*w; s.mem+=r.mem*w; m.set(k,s);}
+  return [...m.values()].sort((a,b)=>b.core-a.core);
+}
+function table(id,cols,rows){
+  const el=document.getElementById(id);
+  el.innerHTML='<thead><tr>'+cols.map(c=>`<th class="${c.n?'n':''}">${h(c.h)}</th>`).join('')+'</tr></thead><tbody>'+
+    (rows.length?rows.map(r=>'<tr>'+cols.map(c=>`<td class="${c.n?'n':''} ${c.cls||''}">${c.f(r)}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${cols.length}" style="color:var(--ink-3)">Nothing visible to this viewer</td></tr>`)+'</tbody>';
+}
+function render(){
+  const recs=DATA.records.filter(visible);
+  const sumCols=k=>[{h:k,f:r=>h(r.name)},{h:'Attempts',n:1,f:r=>r.attempts},{h:'Success',n:1,f:r=>r.succeeded},{h:'Failed',n:1,f:r=>r.failed},{h:'Running',n:1,f:r=>r.running},{h:'Wall h',n:1,f:r=>hrs(r.wall)},{h:'Core h',n:1,f:r=>hrs(r.core)},{h:'GPU h',n:1,f:r=>hrs(r.gpu)},{h:'Mem GBh',n:1,f:r=>gbh(r.mem)}];
+  table('by_initiator',sumCols('Initiator'),summarize(recs,'initiatorid','initiatorname'));
+  table('by_provider',sumCols('Provider'),summarize(recs,'providerid','providername'));
+  table('records',[
+    {h:'Process',cls:'mono',f:r=>shortId(r.processid)},{h:'Attempt',n:1,f:r=>r.attempt},{h:'Function',f:r=>h(r.funcname)},{h:'Label',f:r=>h(r.label)},
+    {h:'Initiator',f:r=>h(r.initiatorname)},{h:'Executor',f:r=>h(r.executorname)},{h:'Provider',f:r=>h(r.providername||'colony')},
+    {h:'Start',cls:'mono',f:r=>new Date(r.starttime).toLocaleTimeString()},{h:'Wall',n:1,f:r=>{const end=r.endtime&&!r.endtime.startsWith('0001')?new Date(r.endtime):new Date();return Math.round((end-new Date(r.starttime))/1000)+'s'}},
+    {h:'CPU',n:1,f:r=>r.cpu+'m'},{h:'GPU',n:1,f:r=>r.gpucount},{h:'Outcome',f:r=>`<span class="pill ${h(r.outcome)}">${h(r.outcome)}</span>`}],recs);
+  const sgn=v=>`<span class="${v>=0?'pos':'neg'}">${v>=0?'+':''}${hrs(v)}</span>`;
+  table('balance',[{h:'Member',f:r=>h(r.username)},{h:'Consumed core h',n:1,f:r=>hrs(r.consumedcoreseconds)},{h:'Provided core h',n:1,f:r=>hrs(r.providedcoreseconds)},{h:'Self core h',n:1,f:r=>hrs(r.selfcoreseconds)},{h:'Net core h',n:1,f:r=>sgn(r.providedcoreseconds-r.consumedcoreseconds)},{h:'Consumed GPU h',n:1,f:r=>hrs(r.consumedgpuseconds)},{h:'Provided GPU h',n:1,f:r=>hrs(r.providedgpuseconds)},{h:'Net GPU h',n:1,f:r=>sgn(r.providedgpuseconds-r.consumedgpuseconds)}],DATA.balance);
+  document.getElementById('whonote').textContent=VIEWERS.find(v=>v.id===viewer).note+(viewer==='owner'?'':' The balance table is aggregated per member and open to every member.');
+  document.querySelectorAll('#who button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===viewer));
+}
+document.getElementById('who').innerHTML=VIEWERS.map(v=>`<button data-id="${v.id}">${h(v.label)}</button>`).join('');
+document.getElementById('who').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;viewer=b.dataset.id;render();});
+async function load(){
+  try{
+    const [r,b,u]=await Promise.all([fetch('data/records.json',{cache:'no-store'}).then(x=>x.json()),fetch('data/balance.json',{cache:'no-store'}).then(x=>x.json()),fetch('data/updated.txt',{cache:'no-store'}).then(x=>x.text())]);
+    DATA={records:r||[],balance:b||[]}; document.getElementById('updated').textContent=new Date(u.trim()).toLocaleTimeString(); render();
+  }catch(e){ document.getElementById('updated').textContent='fetch failed'; }
+}
+load(); setInterval(load,5000);
+</script></body></html>
